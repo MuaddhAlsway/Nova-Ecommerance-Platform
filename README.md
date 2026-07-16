@@ -1,190 +1,366 @@
-# NOVA — Luxury Technology E-commerce Platform
+<div align="center">
 
-A full-stack production e-commerce platform with complete logistics system. Built with React, Hono (Cloudflare Workers), Turso/SQLite, Stripe, and Shippo (40+ carriers).
+# ✨ NOVA
 
-## Live Demo
+### Luxury Technology E-commerce Platform
 
-| Service | URL |
-|---------|-----|
-| **Frontend** | [nova-ecommerce-cm7.pages.dev](https://nova-ecommerce-cm7.pages.dev) |
-| **Backend API** | [nova-api.muaddhalsway.workers.dev](https://nova-api.muaddhalsway.workers.dev) |
+A full-stack production e-commerce platform with complete logistics system.
 
-## Tech Stack
+![License](https://img.shields.io/badge/license-private-red?style=flat-square&color=474747)
+![Stars](https://img.shields.io/badge/⭐-stars-blue?style=flat-square&color=fbbf24)
+![Status](https://img.shields.io/badge/status-active-brightgreen?style=flat-square)
+![Deployed](https://img.shields.io/badge/deployed-cloudflare-orange?style=flat-square&color=f48120)
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, React Router 7, Tailwind CSS 4, Radix UI, Recharts |
-| Backend | Hono on Cloudflare Workers |
-| Database | Turso (libSQL/SQLite edge replicas) |
-| Payments | Stripe (test mode) |
-| Shipping | Shippo API (USPS, UPS, FedEx, DHL + 37 carriers) |
-| Email | Gmail API via OAuth2 (ready, needs refresh token) |
-| Hosting | Cloudflare Pages (frontend) + Cloudflare Workers (backend) |
+---
 
-## Features
+**🌐 [Live Frontend](https://nova-ecommerce-cm7.pages.dev)** · **⚙️ [Live API](https://nova-api.muaddhalsway.workers.dev)**
 
-### Customer-Facing
-- **Product Catalog** — Grid/list view with search, category filtering, sort options
-- **Product Detail** — Full specs, image gallery, star ratings, related products
-- **Shopping Cart** — Quantity management, persistent across sessions
-- **Checkout** — Stripe payment, multiple shipping options with real-time rates from Shippo
-- **User Accounts** — Registration, login, order history, profile management
-- **Wishlist** — Save and manage favorite products
-- **Reviews & Ratings** — Star ratings and text reviews on products
-- **Newsletter Signup** — Email subscription
-- **Infinite-scroll Testimonials** — Auto-scrolling customer review carousel
-- **Static Pages** — About, Contact, FAQ, Careers, Press, Privacy, Terms, Cookies, Shipping
+---
 
-### Admin Dashboard (`/admin`)
-| Tab | Capabilities |
-|-----|-------------|
-| **Overview** | Revenue, orders, users, products stats with visual cards |
-| **Products** | Full CRUD — create, edit, delete products with categories, pricing, stock |
-| **Orders** | View all orders, update status (pending → confirmed → shipped → delivered) |
-| **Users** | View registered users, roles |
-| **Categories** | Manage product categories |
-| **Coupons** | Create discount codes (percent/fixed), min order, expiry, usage limits |
-| **Testimonials** | CRUD customer testimonials displayed on homepage |
-| **Notifications** | Email broadcast to all users or customers only |
+</div>
 
-### Operations & Logistics
-- **Fulfillment Pipeline** — Pick → Pack → Ship workflow with task tracking
-- **Inventory Management** — Multi-warehouse stock, bin locations, reorder points
-- **Inventory Movements** — Track inbound, outbound, transfers, adjustments, returns
-- **Suppliers** — Manage supplier directory with contact info, payment terms, ratings
-- **Purchase Orders** — Create POs to suppliers with line items and status tracking
-- **Shipping Labels** — Generate and purchase labels via Shippo (40+ carriers)
-- **Carrier Pickups** — Schedule and manage carrier pickups
-- **Returns (RMA)** — Full returns workflow: request → approve → transit → inspect → refund
+<br>
 
-### Shipping (Shippo Integration)
-- Real-time rate calculation from 40+ carriers
-- Pre-configured fallback rates (USPS, UPS, FedEx, DHL, Free Standard)
-- Shipping label generation and tracking
-- Carrier pickup scheduling
+## 🛠️ Tech Stack
 
-## Database Schema (20 tables)
+<div align="center">
+
+**Frontend**
+
+![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![React Router](https://img.shields.io/badge/React_Router-7-CA4245?style=for-the-badge&logo=reactrouter&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-6-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![Radix UI](https://img.shields.io/badge/Radix_UI-MUI-1E1E1E?style=for-the-badge&logo=mui&logoColor=white)
+![Recharts](https://img.shields.io/badge/Recharts-2-FF6384?style=for-the-badge&logo=recharts&logoColor=white)
+![Lucide](https://img.shields.io/badge/Lucide-Icons-7C3AED?style=for-the-badge&logo=lucide&logoColor=white)
+
+<br>
+
+**Backend & Infrastructure**
+
+![Hono](https://img.shields.io/badge/Hono-Framework-FF6B35?style=for-the-badge&logo=hono&logoColor=white)
+![Cloudflare Workers](https://img.shields.io/badge/Cloudflare_Workers-F48120?style=for-the-badge&logo=cloudflareworkers&logoColor=white)
+![Cloudflare Pages](https://img.shields.io/badge/Cloudflare_Pages-F48120?style=for-the-badge&logo=cloudflare&logoColor=white)
+![Turso](https://img.shields.io/badge/Turso-Database-4FF8D2?style=for-the-badge&logo=turso&logoColor=black)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+
+<br>
+
+**Services & APIs**
+
+![Stripe](https://img.shields.io/badge/Stripe-Payments-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
+![Shippo](https://img.shields.io/badge/Shippo-Shipping-111111?style=for-the-badge&logo=shippo&logoColor=white)
+![Gmail API](https://img.shields.io/badge/Gmail_API-Email-EA4335?style=for-the-badge&logo=google&logoColor=white)
+![Google OAuth](https://img.shields.io/badge/Google_OAuth-Auth-4285F4?style=for-the-badge&logo=google&logoColor=white)
+
+</div>
+
+<br>
+
+## 🚀 Features
+
+### 🛍️ Customer Experience
+
+| Feature | Description |
+|---------|------------|
+| 🏪 **Product Catalog** | Grid/list view with search, category filtering, sort options |
+| 📦 **Product Detail** | Full specs, image gallery, star ratings, related products |
+| 🛒 **Smart Cart** | Quantity management, persistent across sessions |
+| 💳 **Checkout** | Stripe payment with real-time shipping rates from Shippo |
+| 👤 **User Accounts** | Registration, login, order history, profile management |
+| ❤️ **Wishlist** | Save and manage favorite products |
+| ⭐ **Reviews & Ratings** | Star ratings and text reviews on products |
+| 📧 **Newsletter** | Email subscription |
+| 💬 **Testimonials** | Auto-scrolling infinite carousel on homepage |
+| 📄 **Static Pages** | About, Contact, FAQ, Careers, Press, Privacy, Terms, Cookies, Shipping |
+
+### 🎛️ Admin Dashboard
+
+<table>
+<tr>
+<td width="50%">
+
+**📊 Overview**
+- Revenue, orders, users, products stats
+- Visual stat cards with icons
+
+**📦 Products**
+- Full CRUD operations
+- Categories, pricing, stock management
+
+**🧾 Orders**
+- View all orders
+- Status tracking (pending → delivered)
+
+**👥 Users**
+- User directory with roles
+
+</td>
+<td width="50%">
+
+**🏷️ Categories**
+- Manage product categories
+
+**🎫 Coupons**
+- Discount codes (percent/fixed)
+- Min order, expiry, usage limits
+
+**💬 Testimonials**
+- CRUD customer quotes
+
+**📢 Notifications**
+- Email broadcast to all users
+
+</td>
+</tr>
+</table>
+
+### ⚙️ Operations & Logistics
+
+| Module | What It Does |
+|--------|-------------|
+| 📋 **Fulfillment Pipeline** | Pick → Pack → Ship workflow with task tracking |
+| 📊 **Inventory Management** | Multi-warehouse stock, bin locations, reorder points |
+| 🔄 **Inventory Movements** | Track inbound, outbound, transfers, adjustments, returns |
+| 🏭 **Suppliers** | Directory with contact info, payment terms, ratings |
+| 📄 **Purchase Orders** | Create POs to suppliers with line items and status |
+| 🏷️ **Shipping Labels** | Generate and purchase labels via Shippo (40+ carriers) |
+| 🚚 **Carrier Pickups** | Schedule and manage carrier pickups |
+| ↩️ **Returns (RMA)** | Full workflow: request → approve → transit → inspect → refund |
+
+### 🚚 Shipping (Shippo Integration)
 
 ```
-users                  — Authentication, profiles, roles
-categories             — Product categories with icons
-products               — Full product catalog with specs, pricing, flags
-cart_items             — Shopping cart per user
-orders                 — Order lifecycle with shipping details
-order_items            — Line items per order
-wishlists              — User product favorites
-newsletter_subscribers — Email subscribers
-testimonials           — Customer quotes for homepage
-reviews                — Product ratings and reviews
-coupons                — Discount codes
-warehouses            — Warehouse locations
-inventory              — Stock levels per product per warehouse
-inventory_movements    — Stock movement audit trail
-suppliers              — Supplier directory
-supplier_products      — Supplier-to-product pricing
-purchase_orders        — POs to suppliers
-purchase_order_items   — Line items per PO
-fulfillment_tasks      — Pick/pack/ship task tracking
-pick_lists             — Batch picking lists
-pick_list_items        — Items in pick lists
-returns                — RMA return requests
-return_items           — Items being returned
-notifications          — Email/notification queue
-shipping_labels        — Generated shipping labels
-carrier_pickups        — Scheduled carrier pickups
+📦 40+ carriers — USPS, UPS, FedEx, DHL + more
+💰 Real-time rate calculation
+🏷️ Shipping label generation
+📍 Tracking & delivery updates
+🚚 Carrier pickup scheduling
 ```
 
-## API Endpoints
+<br>
 
-### Authentication
+## 🗄️ Database Schema
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  20 Tables · Turso (Edge-Hosted SQLite)                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  👤 Users              🏷️ Categories          📦 Products   │
+│  🛒 Cart Items         🧾 Orders              📋 Order Items│
+│  ❤️ Wishlists          📧 Newsletter          💬 Testimonials│
+│  ⭐ Reviews            🎫 Coupons             🏭 Warehouses │
+│  📊 Inventory          🔄 Inventory Movements 🏭 Suppliers  │
+│  🔗 Supplier Products  📄 Purchase Orders     📋 PO Items   │
+│  📋 Fulfillment Tasks  📋 Pick Lists          📋 Pick Items │
+│  ↩️ Returns            ↩️ Return Items         📢 Notifications│
+│  🏷️ Shipping Labels    🚚 Carrier Pickups                    │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+<br>
+
+## 🌐 API Reference
+
+<details>
+<summary><strong>🔐 Authentication</strong></summary>
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/auth/register` | Create account |
-| POST | `/api/auth/login` | Login (returns JWT) |
-| GET | `/api/auth/me` | Get current user |
+| `POST` | `/api/auth/register` | Create account |
+| `POST` | `/api/auth/login` | Login (returns JWT) |
+| `GET` | `/api/auth/me` | Get current user |
 
-### Products
+</details>
+
+<details>
+<summary><strong>📦 Products</strong></summary>
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/products` | List products (with search, category, sort) |
-| GET | `/api/products/:id` | Product detail |
-| POST | `/api/products` | Create product (admin) |
-| PUT | `/api/products/:id` | Update product (admin) |
-| DELETE | `/api/products/:id` | Delete product (admin) |
-| GET | `/api/categories` | List categories |
+| `GET` | `/api/products` | List products (search, category, sort) |
+| `GET` | `/api/products/:id` | Product detail |
+| `POST` | `/api/products` | Create product *(admin)* |
+| `PUT` | `/api/products/:id` | Update product *(admin)* |
+| `DELETE` | `/api/products/:id` | Delete product *(admin)* |
+| `GET` | `/api/categories` | List categories |
 
-### Cart & Checkout
+</details>
+
+<details>
+<summary><strong>🛒 Cart & Checkout</strong></summary>
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/cart` | Get cart items |
-| POST | `/api/cart` | Add to cart |
-| PUT | `/api/cart/:id` | Update quantity |
-| DELETE | `/api/cart/:id` | Remove from cart |
-| POST | `/api/checkout` | Stripe checkout session |
+| `GET` | `/api/cart` | Get cart items |
+| `POST` | `/api/cart` | Add to cart |
+| `PUT` | `/api/cart/:id` | Update quantity |
+| `DELETE` | `/api/cart/:id` | Remove from cart |
+| `POST` | `/api/checkout` | Stripe checkout session |
 
-### Orders
+</details>
+
+<details>
+<summary><strong>🧾 Orders</strong></summary>
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/orders` | User's orders |
-| GET | `/api/orders/:id` | Order detail |
-| GET | `/api/admin/orders` | All orders (admin) |
-| PUT | `/api/admin/orders/:id` | Update order status (admin) |
+| `GET` | `/api/orders` | User's orders |
+| `GET` | `/api/orders/:id` | Order detail |
+| `GET` | `/api/admin/orders` | All orders *(admin)* |
+| `PUT` | `/api/admin/orders/:id` | Update order status *(admin)* |
 
-### Wishlist & Reviews
+</details>
+
+<details>
+<summary><strong>❤️ Wishlist & Reviews</strong></summary>
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/wishlist` | Get wishlist |
-| POST | `/api/wishlist` | Add to wishlist |
-| DELETE | `/api/wishlist/:productId` | Remove from wishlist |
-| GET | `/api/products/:id/reviews` | Get product reviews |
-| POST | `/api/products/:id/reviews` | Submit review |
+| `GET` | `/api/wishlist` | Get wishlist |
+| `POST` | `/api/wishlist` | Add to wishlist |
+| `DELETE` | `/api/wishlist/:productId` | Remove from wishlist |
+| `GET` | `/api/products/:id/reviews` | Get product reviews |
+| `POST` | `/api/products/:id/reviews` | Submit review |
 
-### Shipping
+</details>
+
+<details>
+<summary><strong>🚚 Shipping</strong></summary>
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/shipping/rates` | Get shipping rates (Shippo) |
-| POST | `/api/shipping/label` | Create shipping label |
-| POST | `/api/shipping/pickup` | Schedule carrier pickup |
+| `POST` | `/api/shipping/rates` | Get shipping rates (Shippo) |
+| `POST` | `/api/shipping/label` | Create shipping label |
+| `POST` | `/api/shipping/pickup` | Schedule carrier pickup |
 
-### Coupons & Newsletter
+</details>
+
+<details>
+<summary><strong>🎫 Coupons & Newsletter</strong></summary>
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/coupons/validate` | Validate coupon code |
-| POST | `/api/newsletter` | Subscribe to newsletter |
+| `POST` | `/api/coupons/validate` | Validate coupon code |
+| `POST` | `/api/newsletter` | Subscribe to newsletter |
 
-### Admin
+</details>
+
+<details>
+<summary><strong>⚙️ Admin Panel</strong></summary>
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/admin/stats` | Dashboard statistics |
-| GET/POST/PUT/DELETE | `/api/admin/categories/*` | Category management |
-| GET/POST/PUT/DELETE | `/api/admin/coupons/*` | Coupon management |
-| GET/POST/PUT/DELETE | `/api/admin/testimonials/*` | Testimonial management |
-| POST | `/api/admin/broadcast` | Email broadcast |
-| GET | `/api/admin/smtp-test` | Test email connectivity |
+| `GET` | `/api/admin/stats` | Dashboard statistics |
+| `GET/POST/PUT/DELETE` | `/api/admin/categories/*` | Category management |
+| `GET/POST/PUT/DELETE` | `/api/admin/coupons/*` | Coupon management |
+| `GET/POST/PUT/DELETE` | `/api/admin/testimonials/*` | Testimonial management |
+| `POST` | `/api/admin/broadcast` | Email broadcast |
+| `GET` | `/api/admin/smtp-test` | Test email connectivity |
 
-### Operations (Admin)
+</details>
+
+<details>
+<summary><strong>🏭 Operations (Admin)</strong></summary>
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET/POST/PUT | `/api/admin/fulfillment/*` | Fulfillment tasks |
-| GET/POST/PUT | `/api/admin/inventory/*` | Inventory management |
-| GET/POST/PUT/DELETE | `/api/admin/suppliers/*` | Supplier management |
-| GET/POST/PUT | `/api/admin/purchase-orders/*` | Purchase orders |
-| GET/POST/PUT | `/api/admin/warehouses/*` | Warehouse management |
-| GET/POST/PUT | `/api/admin/returns/*` | Returns/RMA |
+| `GET/POST/PUT` | `/api/admin/fulfillment/*` | Fulfillment tasks |
+| `GET/POST/PUT` | `/api/admin/inventory/*` | Inventory management |
+| `GET/POST/PUT/DELETE` | `/api/admin/suppliers/*` | Supplier management |
+| `GET/POST/PUT` | `/api/admin/purchase-orders/*` | Purchase orders |
+| `GET/POST/PUT` | `/api/admin/warehouses/*` | Warehouse management |
+| `GET/POST/PUT` | `/api/admin/returns/*` | Returns/RMA |
 
-## Getting Started
+</details>
 
-### Prerequisites
-- Node.js 18+
-- pnpm (recommended) or npm
+<br>
 
-### Local Development
+## 🏗️ Project Structure
+
+```
+luxury-tech-ecommerce/
+├── 📂 src/
+│   ├── 📂 app/
+│   │   ├── 📂 pages/              23 page components
+│   │   │   ├── 🏠 Home.tsx              Landing page with hero + testimonials
+│   │   │   ├── 🛍️ Products.tsx          Product catalog with filters
+│   │   │   ├── 📦 ProductDetail.tsx     Single product view
+│   │   │   ├── 🛒 Cart.tsx              Shopping cart
+│   │   │   ├── 💳 Checkout.tsx          Stripe checkout
+│   │   │   ├── 🎛️ AdminDashboard.tsx    Admin panel (8 tabs)
+│   │   │   ├── 📋 FulfillmentPage.tsx   Fulfillment workflow
+│   │   │   ├── 📊 InventoryPage.tsx     Inventory management
+│   │   │   ├── 🏭 SupplierPage.tsx      Supplier management
+│   │   │   ├── 📈 AnalyticsPage.tsx     Analytics dashboard
+│   │   │   ├── 👤 UserDashboard.tsx     User account
+│   │   │   ├── 🔐 Login.tsx / Register.tsx
+│   │   │   └── 📄 ... (About, Contact, FAQ, etc.)
+│   │   ├── 📂 context/
+│   │   │   └── 🔑 AuthContext.tsx       Authentication state
+│   │   ├── ⚙️ config.ts                 API base URL
+│   │   └── 🚀 App.tsx                   Router + navigation
+│   └── 📂 styles/
+│       ├── 🎨 index.css                 Tailwind imports + globals
+│       └── ✨ globals.css               Testimonial scroll animations
+├── 📂 server/
+│   ├── 🖥️ index.ts                Express dev server
+│   ├── 🗄️ schema.ts               Database schema (20 tables)
+│   ├── 🌱 seed.ts                 Sample data seeder
+│   ├── 🔐 auth.ts                 Password hashing (scrypt)
+│   ├── 🔌 db.ts                   Turso client
+│   ├── 🛡️ middleware.ts            Auth middleware
+│   └── 📂 routes/                 17 route modules
+│       ├── 📦 products.ts, 🧾 orders.ts, 🛒 cart.ts, 🔐 auth.ts
+│       ├── 💳 payments.ts (Stripe), 🚚 shipping.ts (Shippo)
+│       ├── 📋 fulfillment.ts, 📊 inventory.ts, 🏭 suppliers.ts
+│       ├── ↩️ returns.ts, ⭐ reviews.ts, ❤️ wishlist.ts
+│       └── 🎫 coupons.ts, 📧 newsletter.ts, 📢 notifications.ts
+├── ⚡ worker/
+│   └── 📦 index.ts                Cloudflare Worker (Hono) — production backend
+├── 📋 wrangler.toml.example        CF Worker config template
+├── 🌍 .env.example                 Environment variables template
+├── ⚡ vite.config.ts                Vite build config
+├── 🎨 postcss.config.mjs           PostCSS + Tailwind
+└── 📦 package.json                 Dependencies and scripts
+```
+
+<br>
+
+## 🎨 Design System
+
+<div align="center">
+
+| Element | Value |
+|---------|-------|
+| 🌑 **Theme** | Dark (`bg-[#080808]`) |
+| 🔤 **Typography** | `font-display` (Glock serif) headings, system sans body |
+| 🔲 **Components** | `rounded-2xl`, `border-white/[0.07]` |
+| ✨ **Animations** | CSS keyframe infinite-scroll carousel, motion/react transitions |
+| 🧩 **UI Library** | Radix UI primitives + Tailwind CSS |
+
+</div>
+
+<br>
+
+## 🚀 Getting Started
+
+### 📋 Prerequisites
+
+![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)
+![pnpm](https://img.shields.io/badge/pnpm-Recommended-FF6900?style=flat-square&logo=pnpm&logoColor=white)
+
+### 🏃 Local Development
 
 ```bash
-# Install dependencies
+# 📥 Install dependencies
 pnpm install
 
-# Start frontend + backend dev servers
+# 🚀 Start frontend + backend
 pnpm dev
 
 # Or start individually
@@ -192,9 +368,9 @@ pnpm dev:frontend    # Vite dev server (http://localhost:5173)
 pnpm dev:server      # Express backend (http://localhost:3001)
 ```
 
-### Environment Variables
+### 🔑 Environment Variables
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (see `.env.example`):
 
 ```env
 TURSO_DATABASE_URL=libsql://your-db.turso.io
@@ -203,109 +379,67 @@ STRIPE_SECRET_KEY=sk_test_your-stripe-key
 SHIPPO_API_TOKEN=shippo_live_your-shippo-token
 ```
 
-### Cloudflare Worker Deployment
-
-The production backend runs as a Cloudflare Worker. Environment variables are set in `wrangler.toml`:
+### ☁️ Cloudflare Worker Deployment
 
 ```bash
-# Deploy worker
+# ⚡ Deploy worker
 npx wrangler deploy
 
-# The worker is configured with:
+# Configured with:
 # - nodejs_compat flag (for crypto, buffer, etc.)
-# - All env vars in wrangler.toml
+# - All env vars in wrangler.toml (see wrangler.toml.example)
 ```
 
-### Database
+### 🗄️ Database
 
-The database runs on Turso (edge-hosted libSQL). Tables are auto-created on first request. To seed sample data:
+Runs on **Turso** (edge-hosted libSQL). Tables auto-created on first request.
 
 ```bash
+# 🌱 Seed sample data
 pnpm db:seed
 ```
 
-## Project Structure
+<br>
 
-```
-├── src/
-│   ├── app/
-│   │   ├── pages/           # 23 page components
-│   │   │   ├── Home.tsx           # Landing page with hero, features, testimonials
-│   │   │   ├── Products.tsx       # Product catalog with filters
-│   │   │   ├── ProductDetail.tsx  # Single product view
-│   │   │   ├── Cart.tsx           # Shopping cart
-│   │   │   ├── Checkout.tsx       # Stripe checkout
-│   │   │   ├── AdminDashboard.tsx # Admin panel (8 tabs)
-│   │   │   ├── FulfillmentPage.tsx # Fulfillment workflow
-│   │   │   ├── InventoryPage.tsx  # Inventory management
-│   │   │   ├── SupplierPage.tsx   # Supplier management
-│   │   │   ├── AnalyticsPage.tsx  # Analytics dashboard
-│   │   │   ├── UserDashboard.tsx  # User account
-│   │   │   ├── Login.tsx / Register.tsx
-│   │   │   └── ... (About, Contact, FAQ, etc.)
-│   │   ├── context/
-│   │   │   └── AuthContext.tsx    # Authentication state
-│   │   ├── config.ts              # API base URL
-│   │   └── App.tsx                # Router + navigation
-│   └── styles/
-│       ├── index.css              # Tailwind imports + globals
-│       └── globals.css            # Testimonial scroll animations
-├── server/
-│   ├── index.ts             # Express dev server
-│   ├── schema.ts            # Database schema (20 tables)
-│   ├── seed.ts              # Sample data seeder
-│   ├── auth.ts              # Password hashing (scrypt)
-│   ├── db.ts                # Turso client
-│   ├── middleware.ts         # Auth middleware
-│   └── routes/              # 17 route modules
-│       ├── products.ts, orders.ts, cart.ts, auth.ts
-│       ├── payments.ts (Stripe), shipping.ts (Shippo)
-│       ├── fulfillment.ts, inventory.ts, suppliers.ts
-│       ├── returns.ts, reviews.ts, wishlist.ts
-│       └── coupons.ts, newsletter.ts, notifications.ts
-├── worker/
-│   └── index.ts             # Cloudflare Worker (Hono) — production backend
-├── wrangler.toml            # CF Worker config + env vars
-├── vite.config.ts           # Vite build config
-├── postcss.config.mjs       # PostCSS + Tailwind
-└── package.json             # Dependencies and scripts
-```
+## 🔐 Test Credentials
 
-## Design System
-
-- **Theme:** Dark (`bg-[#080808]`)
-- **Typography:** `font-display` (Glock serif) for headings, system sans-serif for body
-- **Components:** Rounded corners (`rounded-2xl`), subtle borders (`border-white/[0.07]`)
-- **Animations:** CSS keyframe infinite-scroll carousel, motion/react for page transitions
-- **UI Library:** Radix UI primitives + Tailwind CSS
-
-## Credentials (Test)
+<div align="center">
 
 | Role | Email | Password |
 |------|-------|----------|
-| Admin | admin@nova.com | admin123 |
-| User | user@nova.com | user123 |
+| 👑 **Admin** | `admin@nova.com` | `admin123` |
+| 👤 **User** | `user@nova.com` | `user123` |
 
-## Deployment
+**💳 Stripe Test Card:** `4242 4242 4242 4242`
 
-### Frontend (Cloudflare Pages)
-```bash
-pnpm build
-# Deploy via Cloudflare Pages dashboard or Wrangler
-```
+</div>
 
-### Backend (Cloudflare Workers)
-```bash
-cd worker
-npx wrangler deploy
-```
+<br>
 
-### Notes
-- Frontend auto-detects environment: uses `localhost:3001` in dev, CF Worker URL in production
-- Password hashing uses Node.js `crypto.scryptSync` (via `nodejs_compat` flag)
-- Global `JSON.stringify` override in worker converts BigInt to Number for Turso compatibility
-- Stripe is in test mode — use test card `4242 4242 4242 4242`
+## 📦 Deployment
 
-## License
+<div align="center">
 
-Private — All rights reserved.
+| Service | How to Deploy |
+|---------|--------------|
+| 🌐 **Frontend** | Cloudflare Pages — `pnpm build` |
+| ⚙️ **Backend** | Cloudflare Workers — `npx wrangler deploy` |
+
+</div>
+
+> **Note:** Frontend auto-detects environment: uses `localhost:3001` in dev, CF Worker URL in production.
+
+<br>
+
+---
+
+<div align="center">
+
+Built with ❤️ by **Muadh Al-Sway**
+
+![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![Cloudflare](https://img.shields.io/badge/Cloudflare-F48120?style=for-the-badge&logo=cloudflare&logoColor=white)
+![Stripe](https://img.shields.io/badge/Stripe-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
+![Turso](https://img.shields.io/badge/Turso-4FF8D2?style=for-the-badge&logo=turso&logoColor=black)
+
+</div>
