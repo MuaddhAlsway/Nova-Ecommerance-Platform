@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.wrangler
+*.log
+wrangler.toml
+.git_backup
+server.err.log
+server.log
+vite.log
