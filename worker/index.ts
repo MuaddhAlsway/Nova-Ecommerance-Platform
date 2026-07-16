@@ -743,7 +743,7 @@ app.put('/api/products/:id', authMiddleware, adminMiddleware, async (c) => {
     const fields = await c.req.json();
     const keys = Object.keys(fields);
     if (keys.length === 0) return c.json({ error: 'No fields to update' }, 400);
-    const allowed = ['name','subtitle','description','price','original_price','badge','stock','image','category_id','rating','is_best_seller','is_new_arrival','is_featured'];
+    const allowed = ['name','subtitle','description','price','original_price','badge','stock','image','images','specs','category_id','rating','is_best_seller','is_new_arrival','is_featured'];
     const filtered = keys.filter(k => allowed.includes(k));
     if (filtered.length === 0) return c.json({ error: 'No valid fields to update' }, 400);
     const setClause = filtered.map(k => `${k} = ?`).join(', ');
