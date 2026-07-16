@@ -633,6 +633,23 @@ app.get('/api/auth/me', authMiddleware, async (c) => {
   }
 });
 
+app.put('/api/auth/profile', authMiddleware, async (c) => {
+  const db = createDb(c.env);
+  try {
+    const user = c.get('user');
+    const { name, phone, address, avatar } = await c.req.json();
+    await db.execute({
+      sql: 'UPDATE users SET name = COALESCE(?, name), phone = COALESCE(?, phone), address = COALESCE(?, address), avatar = COALESCE(?, avatar) WHERE id = ?',
+      args: [name || null, phone || null, address || null, avatar || null, user.id],
+    });
+    if (c.env.KV) await cacheDelete(c.env.KV, `auth:${c.req.header('Authorization')?.replace('Bearer ', '')}`);
+    const updated = await db.execute({ sql: 'SELECT id, name, email, role, avatar, phone, address FROM users WHERE id = ?', args: [user.id] });
+    return c.json(updated.rows[0]);
+  } catch {
+    return c.json({ error: 'Failed to update profile' }, 500);
+  }
+});
+
 app.get('/api/products', async (c) => {
   const db = createDb(c.env);
   try {
@@ -776,6 +793,32 @@ app.get('/api/cart', authMiddleware, async (c) => {
 });
 
 app.post('/api/cart/add', authMiddleware, async (c) => {
+  const db = createDb(c.env);
+  try {
+    const user = c.get('user');
+    const { product_id, quantity } = await c.req.json();
+    if (!product_id) return c.json({ error: 'product_id is required' }, 400);
+    const existing = await db.execute({
+      sql: 'SELECT id, quantity FROM cart_items WHERE user_id = ? AND product_id = ?',
+      args: [user.id, product_id],
+    });
+    if (existing.rows.length > 0) {
+      const newQty = (existing.rows[0] as any).quantity + (quantity || 1);
+      await db.execute({ sql: 'UPDATE cart_items SET quantity = ? WHERE id = ?', args: [newQty, (existing.rows[0] as any).id] });
+    } else {
+      await db.execute({
+        sql: 'INSERT INTO cart_items (user_id, product_id, quantity) VALUES (?, ?, ?)',
+        args: [user.id, product_id, quantity || 1],
+      });
+    }
+    return c.json({ message: 'Added to cart' }, 201);
+  } catch {
+    return c.json({ error: 'Failed to add to cart' }, 500);
+  }
+});
+
+// Alias: POST /api/cart (body-based, matches frontend)
+app.post('/api/cart', authMiddleware, async (c) => {
   const db = createDb(c.env);
   try {
     const user = c.get('user');
@@ -1019,6 +1062,83 @@ app.post('/api/wishlist/:productId', authMiddleware, async (c) => {
   }
 });
 
+// Alias: POST /api/wishlist (body-based, matches frontend)
+app.post('/api/wishlist', authMiddleware, async (c) => {
+  const db = createDb(c.env);
+  try {
+    const user = c.get('user');
+    const { product_id } = await c.req.json();
+    if (!product_id) return c.json({ error: 'product_id is required' }, 400);
+    const existing = await db.execute({
+      sql: 'SELECT id FROM wishlists WHERE user_id = ? AND product_id = ?',
+      args: [user.id, product_id],
+    });
+    if (existing.rows.length > 0) {
+      await db.execute({ sql: 'DELETE FROM wishlists WHERE user_id = ? AND product_id = ?', args: [user.id, product_id] });
+      if (c.env.KV) await cacheDelete(c.env.KV, userKey(user.id, 'wishlist'));
+      return c.json({ message: 'Removed from wishlist', added: false });
+    } else {
+      await db.execute({ sql: 'INSERT OR IGNORE INTO wishlists (user_id, product_id) VALUES (?, ?)', args: [user.id, product_id] });
+      if (c.env.KV) await cacheDelete(c.env.KV, userKey(user.id, 'wishlist'));
+      return c.json({ message: 'Added to wishlist', added: true }, 201);
+    }
+  } catch {
+    return c.json({ error: 'Failed to toggle wishlist' }, 500);
+  }
+});
+
+app.delete('/api/wishlist/:productId', authMiddleware, async (c) => {
+  const db = createDb(c.env);
+  try {
+    const user = c.get('user');
+    const productId = c.req.param('productId');
+    await db.execute({ sql: 'DELETE FROM wishlists WHERE user_id = ? AND product_id = ?', args: [user.id, productId] });
+    if (c.env.KV) await cacheDelete(c.env.KV, userKey(user.id, 'wishlist'));
+    return c.json({ message: 'Removed from wishlist' });
+  } catch {
+    return c.json({ error: 'Failed to remove from wishlist' }, 500);
+  }
+});
+
+app.get('/api/reviews/user/check/:productId', authMiddleware, async (c) => {
+  const db = createDb(c.env);
+  try {
+    const user = c.get('user');
+    const result = await db.execute({
+      sql: 'SELECT * FROM reviews WHERE user_id = ? AND product_id = ?',
+      args: [user.id, c.req.param('productId')],
+    });
+    if (result.rows.length > 0) return c.json({ reviewed: true, review: result.rows[0] });
+    return c.json({ reviewed: false });
+  } catch {
+    return c.json({ reviewed: false });
+  }
+});
+
+app.get('/api/reviews/:productId', async (c) => {
+  const db = createDb(c.env);
+  try {
+    const pid = c.req.param('productId');
+    const cached = await cachedQuery(c.env.KV, `reviews:${pid}`, CACHE_TTL.products, async () => {
+      const result = await db.execute({
+        sql: `SELECT r.*, u.name as reviewer_name, u.avatar as reviewer_avatar
+              FROM reviews r JOIN users u ON r.user_id = u.id
+              WHERE r.product_id = ? ORDER BY r.created_at DESC`,
+        args: [pid],
+      });
+      const stats = await db.execute({
+        sql: 'SELECT COALESCE(ROUND(AVG(rating), 1), 0) as average, COUNT(*) as count FROM reviews WHERE product_id = ?',
+        args: [pid],
+      });
+      const { average, count } = stats.rows[0] as any;
+      return { reviews: result.rows, average, count };
+    });
+    return c.json(cached);
+  } catch {
+    return c.json({ error: 'Failed to fetch reviews' }, 500);
+  }
+});
+
 app.get('/api/reviews/product/:productId', async (c) => {
   const db = createDb(c.env);
   try {
@@ -1074,6 +1194,55 @@ app.post('/api/reviews', authMiddleware, async (c) => {
     return c.json({ message: 'Review submitted' }, 201);
   } catch {
     return c.json({ error: 'Failed to submit review' }, 500);
+  }
+});
+
+app.get('/api/coupons', authMiddleware, adminMiddleware, async (c) => {
+  const db = createDb(c.env);
+  try {
+    const result = await db.execute('SELECT * FROM coupons ORDER BY id DESC');
+    return c.json(sanitizeRows(result.rows));
+  } catch {
+    return c.json({ error: 'Failed to fetch coupons' }, 500);
+  }
+});
+
+app.post('/api/coupons', authMiddleware, adminMiddleware, async (c) => {
+  const db = createDb(c.env);
+  try {
+    const { code, discount_type, discount_value, min_order, max_uses, expires_at } = await c.req.json();
+    if (!code || !discount_type || discount_value == null) return c.json({ error: 'code, discount_type, discount_value required' }, 400);
+    const result = await db.execute({
+      sql: 'INSERT INTO coupons (code, discount_type, discount_value, min_order, max_uses, expires_at, is_active, used_count) VALUES (?, ?, ?, ?, ?, ?, 1, 0)',
+      args: [code.toUpperCase(), discount_type, discount_value, min_order || 0, max_uses || 0, expires_at || null],
+    });
+    return c.json({ id: Number(result.lastInsertRowid), code: code.toUpperCase(), discount_type, discount_value, min_order: min_order || 0, max_uses: max_uses || 0, expires_at: expires_at || null, is_active: true, used_count: 0 }, 201);
+  } catch {
+    return c.json({ error: 'Failed to create coupon' }, 500);
+  }
+});
+
+app.put('/api/coupons/:id', authMiddleware, adminMiddleware, async (c) => {
+  const db = createDb(c.env);
+  try {
+    const { code, discount_type, discount_value, min_order, max_uses, expires_at, is_active } = await c.req.json();
+    await db.execute({
+      sql: 'UPDATE coupons SET code=COALESCE(?,code), discount_type=COALESCE(?,discount_type), discount_value=COALESCE(?,discount_value), min_order=COALESCE(?,min_order), max_uses=COALESCE(?,max_uses), expires_at=COALESCE(?,expires_at), is_active=COALESCE(?,is_active) WHERE id=?',
+      args: [code?.toUpperCase() || null, discount_type || null, discount_value ?? null, min_order ?? null, max_uses ?? null, expires_at || null, is_active ?? null, c.req.param('id')],
+    });
+    return c.json({ message: 'Coupon updated' });
+  } catch {
+    return c.json({ error: 'Failed to update coupon' }, 500);
+  }
+});
+
+app.delete('/api/coupons/:id', authMiddleware, adminMiddleware, async (c) => {
+  const db = createDb(c.env);
+  try {
+    await db.execute({ sql: 'DELETE FROM coupons WHERE id = ?', args: [c.req.param('id')] });
+    return c.json({ message: 'Coupon deleted' });
+  } catch {
+    return c.json({ error: 'Failed to delete coupon' }, 500);
   }
 });
 
