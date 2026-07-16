@@ -138,6 +138,13 @@ export default function ProductDetail() {
         .then(r => r.ok ? r.json() : { reviewed: false })
         .then(data => { if (data.reviewed && data.review) setUserReview(data.review); })
         .catch(() => {});
+      fetch(`${API_BASE}/api/wishlist`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => {
+          const list = Array.isArray(data) ? data : data.wishlist || [];
+          setWishlisted(list.some((w: any) => w.product_id === product.id));
+        })
+        .catch(() => {});
     }
   }, [product, token]);
 

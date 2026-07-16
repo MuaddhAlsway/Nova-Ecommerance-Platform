@@ -45,11 +45,41 @@ function Stars({ rating, size = 12 }: { rating: number; size?: number }) {
 function ProductCard({
   product,
   onAddToCart,
+  token,
 }: {
   product: Product;
   onAddToCart: (id: number) => void;
+  token: string | null;
 }) {
   const [wishlisted, setWishlisted] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${API_BASE}/api/wishlist`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        const list = Array.isArray(data) ? data : data.wishlist || [];
+        setWishlisted(list.some((w: any) => w.product_id === product.id));
+      })
+      .catch(() => {});
+  }, [token, product.id]);
+
+  const toggleWishlist = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/wishlist`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ product_id: product.id }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setWishlisted(data.added);
+      }
+    } catch {}
+  };
 
   return (
     <Link to={`/product/${product.id}`} className="block">
@@ -68,11 +98,7 @@ function ProductCard({
           )}
 
           <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setWishlisted((w) => !w);
-            }}
+            onClick={toggleWishlist}
             className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 hover:bg-black/70"
             aria-label="Add to wishlist"
           >
@@ -313,6 +339,7 @@ export default function Products() {
                     key={product.id}
                     product={product}
                     onAddToCart={handleAddToCart}
+                    token={token}
                   />
                 ))}
               </div>
