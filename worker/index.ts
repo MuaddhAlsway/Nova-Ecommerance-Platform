@@ -21,6 +21,8 @@ type Env = {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   GMAIL_REFRESH_TOKEN: string;
+  KV: KVNamespace;
+  RATE_LIMIT: KVNamespace;
 };
 
 type Variables = {
@@ -30,6 +32,149 @@ type Variables = {
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 app.use('*', cors());
+
+// ─── CACHING LAYER ───────────────────────────────────────────
+const CACHE_TTL = {
+  products: 300,        // 5 min
+  product: 300,         // 5 min
+  categories: 3600,     // 1 hour
+  testimonials: 3600,   // 1 hour
+  auth: 600,            // 10 min
+  shippingRates: 900,   // 15 min
+  stats: 120,           // 2 min
+  orders: 60,           // 1 min
+  notifications: 30,    // 30 sec
+  wishlist: 120,        // 2 min
+  suppliers: 300,       // 5 min
+  carriers: 3600,       // 1 hour
+};
+
+// Inflight request dedup — prevents thundering herd on cache miss
+const inflight = new Map<string, Promise<any>>();
+
+async function cacheGet<T>(kv: KVNamespace | undefined, key: string): Promise<T | null> {
+  if (!kv) return null;
+  try {
+    const val = await kv.get(key, 'json');
+    return val as T;
+  } catch { return null; }
+}
+
+async function cacheSet(kv: KVNamespace | undefined, key: string, value: any, ttl: number): Promise<void> {
+  if (!kv) return;
+  try {
+    await kv.put(key, JSON.stringify(value), { expirationTtl: ttl });
+  } catch {}
+}
+
+async function cacheDelete(kv: KVNamespace | undefined, key: string): Promise<void> {
+  if (!kv) return;
+  try { await kv.delete(key); } catch {}
+}
+
+async function cacheInvalidatePattern(kv: KVNamespace | undefined, prefix: string): Promise<void> {
+  if (!kv) return;
+  try {
+    const list = await kv.list({ prefix });
+    await Promise.all(list.keys.map(k => kv.delete(k.name)));
+  } catch {}
+}
+
+// Core cached query with inflight dedup + stale-while-revalidate
+async function cachedQuery<T>(kv: KVNamespace | undefined, key: string, ttl: number, queryFn: () => Promise<T>): Promise<T> {
+  if (!kv) return queryFn();
+  const cached = await cacheGet<T>(kv, key);
+  if (cached !== null) return cached;
+
+  // Dedup: if same key is being fetched right now, wait for it
+  if (inflight.has(key)) return inflight.get(key)!;
+
+  const promise = queryFn().then(async (result) => {
+    await cacheSet(kv, key, result, ttl);
+    inflight.delete(key);
+    return result;
+  }).catch((err) => {
+    inflight.delete(key);
+    throw err;
+  });
+  inflight.set(key, promise);
+  return promise;
+}
+
+// Stale-while-revalidate: return stale immediately, refresh in background
+async function cachedQuerySWR<T>(kv: KVNamespace | undefined, key: string, ttl: number, staleTtl: number, queryFn: () => Promise<T>): Promise<T> {
+  if (!kv) return queryFn();
+  const cached = await cacheGet<{ data: T; ts: number }>(kv, key);
+  if (cached) {
+    const age = Date.now() - cached.ts;
+    if (age < ttl) return cached.data; // fresh
+    if (age < staleTtl) {
+      // stale but usable — refresh in background (fire and forget)
+      queryFn().then(async (fresh) => {
+        await cacheSet(kv, key, { data: fresh, ts: Date.now() }, staleTtl);
+        inflight.delete(key);
+      }).catch(() => {});
+      inflight.delete(key);
+      return cached.data;
+    }
+  }
+  // expired or missing — fetch synchronously with dedup
+  if (inflight.has(key)) {
+    const existing = await inflight.get(key)!;
+    return existing;
+  }
+  const promise = queryFn().then(async (result) => {
+    await cacheSet(kv, key, { data: result, ts: Date.now() }, staleTtl);
+    inflight.delete(key);
+    return result;
+  }).catch((err) => { inflight.delete(key); throw err; });
+  inflight.set(key, promise);
+  return promise;
+}
+
+// User-scoped cache key helper (prevents cross-user data leaks)
+function userKey(userId: number | string, prefix: string, suffix?: string): string {
+  return `u:${userId}:${prefix}${suffix ? ':' + suffix : ''}`;
+}
+
+// ─── RATE LIMITING ───────────────────────────────────────────
+const RATE_LIMITS = {
+  default: { windowMs: 60000, max: 100 },     // 100 req/min
+  auth: { windowMs: 60000, max: 20 },          // 20 login attempts/min
+  checkout: { windowMs: 60000, max: 10 },      // 10 checkouts/min
+  shipping: { windowMs: 60000, max: 30 },      // 30 rate lookups/min
+  broadcast: { windowMs: 60000, max: 5 },       // 5 broadcasts/min
+};
+
+async function checkRateLimit(kv: KVNamespace | undefined, key: string, limit: { windowMs: number; max: number }): Promise<{ allowed: boolean; remaining: number }> {
+  if (!kv) return { allowed: true, remaining: limit.max };
+  const now = Date.now();
+  const windowKey = `rl:${key}:${Math.floor(now / limit.windowMs)}`;
+  try {
+    const current = await kv.get(windowKey, 'text');
+    const count = current ? parseInt(current) : 0;
+    if (count >= limit.max) return { allowed: false, remaining: 0 };
+    await kv.put(windowKey, String(count + 1), { expirationTtl: Math.ceil(limit.windowMs / 1000) + 10 });
+    return { allowed: true, remaining: limit.max - count - 1 };
+  } catch {
+    return { allowed: true, remaining: limit.max };
+  }
+}
+
+function rateLimitMiddleware(limitName: keyof typeof RATE_LIMITS) {
+  return async (c: any, next: any) => {
+    const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+    const token = c.req.header('authorization')?.replace('Bearer ', '') || '';
+    const key = token ? `token:${token}` : `ip:${ip}`;
+    const limit = RATE_LIMITS[limitName];
+    const result = await checkRateLimit(c.env.RATE_LIMIT, key, limit);
+    c.header('X-RateLimit-Remaining', String(result.remaining));
+    if (!result.allowed) return c.json({ error: 'Rate limit exceeded. Try again later.' }, 429);
+    await next();
+  };
+}
+
+// ─── AUTH MIDDLEWARE (with KV cache) ─────────────────────────
 
 function createDb(env: Env) {
   return createClient({ url: env.TURSO_DATABASE_URL, authToken: env.TURSO_AUTH_TOKEN });
@@ -172,18 +317,22 @@ app.use('*', async (c, next) => {
 const authMiddleware = async (c: any, next: any) => {
   const authHeader = c.req.header('Authorization');
   const token = authHeader?.replace('Bearer ', '');
-  if (!token) {
-    return c.json({ error: 'No token provided' }, 401);
+  if (!token) return c.json({ error: 'No token provided' }, 401);
+
+  const kv = c.env.KV;
+  const cacheKey = `auth:${token}`;
+  if (kv) {
+    const cached = await cacheGet<any>(kv, cacheKey);
+    if (cached) { c.set('user', cached); await next(); return; }
   }
+
   const db = createDb(c.env);
-  const result = await db.execute({
-    sql: 'SELECT id, email, name, role FROM users WHERE token = ?',
-    args: [token],
-  });
-  if (result.rows.length === 0) {
-    return c.json({ error: 'Invalid token' }, 401);
-  }
-  c.set('user', result.rows[0] as any);
+  const result = await db.execute({ sql: 'SELECT id, email, name, role FROM users WHERE token = ?', args: [token] });
+  if (result.rows.length === 0) return c.json({ error: 'Invalid token' }, 401);
+
+  const user = result.rows[0] as any;
+  if (kv) await cacheSet(kv, cacheKey, user, CACHE_TTL.auth);
+  c.set('user', user);
   await next();
 };
 
@@ -421,9 +570,12 @@ async function shippoGet(path: string, env: Env): Promise<any> {
   return data;
 }
 
+// ─── GLOBAL RATE LIMIT (all routes) ──────────────────────────
+app.use('/api/*', rateLimitMiddleware('default'));
+
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-app.post('/api/auth/register', async (c) => {
+app.post('/api/auth/register', rateLimitMiddleware('auth'), async (c) => {
   const db = createDb(c.env);
   try {
     const { name, email, password } = await c.req.json();
@@ -442,7 +594,7 @@ app.post('/api/auth/register', async (c) => {
   }
 });
 
-app.post('/api/auth/login', async (c) => {
+app.post('/api/auth/login', rateLimitMiddleware('auth'), async (c) => {
   const db = createDb(c.env);
   try {
     const { email, password } = await c.req.json();
@@ -455,8 +607,10 @@ app.post('/api/auth/login', async (c) => {
     const user = result.rows[0] as any;
     const valid = await verifyPassword(password, user.password_hash);
     if (!valid) return c.json({ error: 'Invalid credentials' }, 401);
+    const oldToken = user.token;
     const token = generateToken();
     await db.execute({ sql: 'UPDATE users SET token = ? WHERE id = ?', args: [token, user.id] });
+    if (c.env.KV && oldToken) await cacheDelete(c.env.KV, `auth:${oldToken}`);
     sendEmail(c.env, user.email, 'Welcome Back to NOVA', loginEmail(user.name)).catch(() => {});
     return c.json({ id: user.id, name: user.name, email: user.email, role: user.role, avatar: user.avatar, phone: user.phone, address: user.address, token });
   } catch {
@@ -490,33 +644,38 @@ app.get('/api/products', async (c) => {
     const page = c.req.query('page') || '1';
     const limit = c.req.query('limit') || '12';
     const sort = c.req.query('sort');
-    let query = 'SELECT * FROM products WHERE 1=1';
-    const args: any[] = [];
-    if (category) { query += ' AND category_id = ?'; args.push(category); }
-    if (best_sellers === 'true') query += ' AND is_best_seller = 1';
-    if (new_arrivals === 'true') query += ' AND is_new_arrival = 1';
-    if (featured === 'true') query += ' AND is_featured = 1';
-    if (search) {
-      query += ' AND (name LIKE ? OR subtitle LIKE ? OR description LIKE ?)';
-      const searchTerm = `%${search}%`;
-      args.push(searchTerm, searchTerm, searchTerm);
-    }
-    let orderClause = ' ORDER BY created_at DESC';
-    if (sort === 'price_asc') orderClause = ' ORDER BY price ASC';
-    else if (sort === 'price_desc') orderClause = ' ORDER BY price DESC';
-    else if (sort === 'rating') orderClause = ' ORDER BY rating DESC';
-    else if (sort === 'name') orderClause = ' ORDER BY name ASC';
-    const pageNum = Math.max(1, Number(page));
-    const limitNum = Math.max(1, Number(limit));
-    const offset = (pageNum - 1) * limitNum;
-    const countQuery = `SELECT COUNT(*) as total FROM products WHERE 1=1` + query.slice('SELECT * FROM products WHERE 1=1'.length);
-    const countResult = await db.execute({ sql: countQuery, args });
-    const total = Number(countResult.rows[0]?.total ?? 0);
-    const totalPages = Math.ceil(total / limitNum);
-    query += orderClause + ' LIMIT ? OFFSET ?';
-    args.push(limitNum, offset);
-    const result = await db.execute({ sql: query, args });
-    return c.json({ products: result.rows, total, page: pageNum, totalPages });
+
+    const cacheKey = `products:${JSON.stringify({ category, best_sellers, new_arrivals, featured, search, page, limit, sort })}`;
+    const cached = await cachedQuery(c.env.KV, cacheKey, CACHE_TTL.products, async () => {
+      let query = 'SELECT * FROM products WHERE 1=1';
+      const args: any[] = [];
+      if (category) { query += ' AND category_id = ?'; args.push(category); }
+      if (best_sellers === 'true') query += ' AND is_best_seller = 1';
+      if (new_arrivals === 'true') query += ' AND is_new_arrival = 1';
+      if (featured === 'true') query += ' AND is_featured = 1';
+      if (search) {
+        query += ' AND (name LIKE ? OR subtitle LIKE ? OR description LIKE ?)';
+        const searchTerm = `%${search}%`;
+        args.push(searchTerm, searchTerm, searchTerm);
+      }
+      let orderClause = ' ORDER BY created_at DESC';
+      if (sort === 'price_asc') orderClause = ' ORDER BY price ASC';
+      else if (sort === 'price_desc') orderClause = ' ORDER BY price DESC';
+      else if (sort === 'rating') orderClause = ' ORDER BY rating DESC';
+      else if (sort === 'name') orderClause = ' ORDER BY name ASC';
+      const pageNum = Math.max(1, Number(page));
+      const limitNum = Math.max(1, Number(limit));
+      const offset = (pageNum - 1) * limitNum;
+      const countQuery = `SELECT COUNT(*) as total FROM products WHERE 1=1` + query.slice('SELECT * FROM products WHERE 1=1'.length);
+      const countResult = await db.execute({ sql: countQuery, args });
+      const total = Number(countResult.rows[0]?.total ?? 0);
+      const totalPages = Math.ceil(total / limitNum);
+      query += orderClause + ' LIMIT ? OFFSET ?';
+      args.push(limitNum, offset);
+      const result = await db.execute({ sql: query, args });
+      return { products: result.rows, total, page: pageNum, totalPages };
+    });
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch products' }, 500);
   }
@@ -525,9 +684,14 @@ app.get('/api/products', async (c) => {
 app.get('/api/products/:id', async (c) => {
   const db = createDb(c.env);
   try {
-    const result = await db.execute({ sql: 'SELECT * FROM products WHERE id = ?', args: [c.req.param('id')] });
-    if (result.rows.length === 0) return c.json({ error: 'Product not found' }, 404);
-    return c.json(result.rows[0]);
+    const id = c.req.param('id');
+    const result = await cachedQuery(c.env.KV, `product:${id}`, CACHE_TTL.product, async () => {
+      const r = await db.execute({ sql: 'SELECT * FROM products WHERE id = ?', args: [id] });
+      if (r.rows.length === 0) return null;
+      return r.rows[0];
+    });
+    if (!result) return c.json({ error: 'Product not found' }, 404);
+    return c.json(result);
   } catch {
     return c.json({ error: 'Failed to fetch product' }, 500);
   }
@@ -549,6 +713,7 @@ app.post('/api/products', authMiddleware, adminMiddleware, async (c) => {
       ],
     });
     const product = await db.execute({ sql: 'SELECT * FROM products WHERE id = ?', args: [Number(result.lastInsertRowid)] });
+    if (c.env.KV) await cacheInvalidatePattern(c.env.KV, 'products:');
     return c.json(product.rows[0], 201);
   } catch {
     return c.json({ error: 'Failed to create product' }, 500);
@@ -573,6 +738,7 @@ app.put('/api/products/:id', authMiddleware, adminMiddleware, async (c) => {
     values.push(c.req.param('id'));
     await db.execute({ sql: `UPDATE products SET ${setClause} WHERE id = ?`, args: values });
     const result = await db.execute({ sql: 'SELECT * FROM products WHERE id = ?', args: [c.req.param('id')] });
+    if (c.env.KV) { await cacheDelete(c.env.KV, `product:${c.req.param('id')}`); await cacheInvalidatePattern(c.env.KV, 'products:'); }
     return c.json(result.rows[0]);
   } catch {
     return c.json({ error: 'Failed to update product' }, 500);
@@ -586,6 +752,7 @@ app.delete('/api/products/:id', authMiddleware, adminMiddleware, async (c) => {
     const existing = await db.execute({ sql: 'SELECT id FROM products WHERE id = ?', args: [id] });
     if (existing.rows.length === 0) return c.json({ error: 'Product not found' }, 404);
     await db.execute({ sql: 'DELETE FROM products WHERE id = ?', args: [id] });
+    if (c.env.KV) { await cacheDelete(c.env.KV, `product:${id}`); await cacheInvalidatePattern(c.env.KV, 'products:'); }
     return c.json({ message: 'Product deleted' });
   } catch {
     return c.json({ error: 'Failed to delete product' }, 500);
@@ -660,7 +827,7 @@ app.delete('/api/cart/:id', authMiddleware, async (c) => {
   }
 });
 
-app.post('/api/cart/checkout', authMiddleware, async (c) => {
+app.post('/api/cart/checkout', authMiddleware, rateLimitMiddleware('checkout'), async (c) => {
   const db = createDb(c.env);
   try {
     const user = c.get('user');
@@ -739,6 +906,13 @@ app.post('/api/cart/checkout', authMiddleware, async (c) => {
     }
     const emailItems = (cart.rows as any[]).map((item: any) => ({ name: item.name || 'Product', qty: item.quantity, price: item.price }));
     sendEmail(c.env, user.email, `Order #${orderId} Confirmed — NOVA`, orderConfirmEmail(user.name, orderId, finalTotal, emailItems)).catch(() => {});
+    if (c.env.KV) {
+      await cacheDelete(c.env.KV, userKey(user.id, 'orders'));
+      await cacheDelete(c.env.KV, userKey(user.id, 'wishlist'));
+      await cacheDelete(c.env.KV, userKey(user.id, 'notif', ':'));
+      await cacheInvalidatePattern(c.env.KV, 'products:');
+      await cacheInvalidatePattern(c.env.KV, 'admin:');
+    }
     return c.json({ order_id: orderId, total: finalTotal, discount: discountAmount, shipping: shippingCost, status: 'confirmed', shippo_shipment: shippoShipment });
   } catch {
     return c.json({ error: 'Failed to checkout' }, 500);
@@ -749,11 +923,14 @@ app.get('/api/orders', authMiddleware, async (c) => {
   const db = createDb(c.env);
   try {
     const user = c.get('user');
-    const result = await db.execute({
-      sql: 'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC',
-      args: [user.id],
+    const cached = await cachedQuery(c.env.KV, userKey(user.id, 'orders'), CACHE_TTL.orders, async () => {
+      const result = await db.execute({
+        sql: 'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC',
+        args: [user.id],
+      });
+      return sanitizeRows(result.rows);
     });
-    return c.json(sanitizeRows(result.rows));
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch orders' }, 500);
   }
@@ -793,6 +970,7 @@ app.put('/api/orders/:id/status', authMiddleware, adminMiddleware, async (c) => 
   try {
     const { status } = await c.req.json();
     await db.execute({ sql: 'UPDATE orders SET status = ? WHERE id = ?', args: [status, c.req.param('id')] });
+    if (c.env.KV) { await cacheInvalidatePattern(c.env.KV, 'admin:'); await cacheInvalidatePattern(c.env.KV, 'orders:'); }
     return c.json({ message: 'Order status updated' });
   } catch {
     return c.json({ error: 'Failed to update order' }, 500);
@@ -803,13 +981,16 @@ app.get('/api/wishlist', authMiddleware, async (c) => {
   const db = createDb(c.env);
   try {
     const user = c.get('user');
-    const result = await db.execute({
-      sql: `SELECT w.id, w.product_id, p.name, p.subtitle, p.price, p.original_price, p.image, p.rating, p.reviews, p.badge, c.name as category
-            FROM wishlists w JOIN products p ON w.product_id = p.id JOIN categories c ON p.category_id = c.id
-            WHERE w.user_id = ? ORDER BY w.created_at DESC`,
-      args: [user.id],
+    const cached = await cachedQuery(c.env.KV, userKey(user.id, 'wishlist'), CACHE_TTL.wishlist, async () => {
+      const result = await db.execute({
+        sql: `SELECT w.id, w.product_id, p.name, p.subtitle, p.price, p.original_price, p.image, p.rating, p.reviews, p.badge, c.name as category
+              FROM wishlists w JOIN products p ON w.product_id = p.id JOIN categories c ON p.category_id = c.id
+              WHERE w.user_id = ? ORDER BY w.created_at DESC`,
+        args: [user.id],
+      });
+      return sanitizeRows(result.rows);
     });
-    return c.json(sanitizeRows(result.rows));
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch wishlist' }, 500);
   }
@@ -826,9 +1007,11 @@ app.post('/api/wishlist/:productId', authMiddleware, async (c) => {
     });
     if (existing.rows.length > 0) {
       await db.execute({ sql: 'DELETE FROM wishlists WHERE user_id = ? AND product_id = ?', args: [user.id, productId] });
+      if (c.env.KV) await cacheDelete(c.env.KV, userKey(user.id, 'wishlist'));
       return c.json({ message: 'Removed from wishlist', added: false });
     } else {
       await db.execute({ sql: 'INSERT OR IGNORE INTO wishlists (user_id, product_id) VALUES (?, ?)', args: [user.id, productId] });
+      if (c.env.KV) await cacheDelete(c.env.KV, userKey(user.id, 'wishlist'));
       return c.json({ message: 'Added to wishlist', added: true }, 201);
     }
   } catch {
@@ -839,18 +1022,22 @@ app.post('/api/wishlist/:productId', authMiddleware, async (c) => {
 app.get('/api/reviews/product/:productId', async (c) => {
   const db = createDb(c.env);
   try {
-    const result = await db.execute({
-      sql: `SELECT r.*, u.name as reviewer_name, u.avatar as reviewer_avatar
-            FROM reviews r JOIN users u ON r.user_id = u.id
-            WHERE r.product_id = ? ORDER BY r.created_at DESC`,
-      args: [c.req.param('productId')],
+    const pid = c.req.param('productId');
+    const cached = await cachedQuery(c.env.KV, `reviews:${pid}`, CACHE_TTL.products, async () => {
+      const result = await db.execute({
+        sql: `SELECT r.*, u.name as reviewer_name, u.avatar as reviewer_avatar
+              FROM reviews r JOIN users u ON r.user_id = u.id
+              WHERE r.product_id = ? ORDER BY r.created_at DESC`,
+        args: [pid],
+      });
+      const stats = await db.execute({
+        sql: 'SELECT COALESCE(ROUND(AVG(rating), 1), 0) as average, COUNT(*) as count FROM reviews WHERE product_id = ?',
+        args: [pid],
+      });
+      const { average, count } = stats.rows[0] as any;
+      return { reviews: result.rows, average, count };
     });
-    const stats = await db.execute({
-      sql: 'SELECT COALESCE(ROUND(AVG(rating), 1), 0) as average, COUNT(*) as count FROM reviews WHERE product_id = ?',
-      args: [c.req.param('productId')],
-    });
-    const { average, count } = stats.rows[0] as any;
-    return c.json({ reviews: result.rows, average, count });
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch reviews' }, 500);
   }
@@ -883,6 +1070,7 @@ app.post('/api/reviews', authMiddleware, async (c) => {
     });
     const { avg_rating, total } = stats.rows[0] as any;
     await db.execute({ sql: 'UPDATE products SET rating = ?, reviews = ? WHERE id = ?', args: [avg_rating, total, product_id] });
+    if (c.env.KV) { await cacheDelete(c.env.KV, `reviews:${product_id}`); await cacheDelete(c.env.KV, `product:${product_id}`); await cacheInvalidatePattern(c.env.KV, 'products:'); }
     return c.json({ message: 'Review submitted' }, 201);
   } catch {
     return c.json({ error: 'Failed to submit review' }, 500);
@@ -929,8 +1117,11 @@ app.post('/api/newsletter', async (c) => {
 app.get('/api/testimonials', async (c) => {
   const db = createDb(c.env);
   try {
-    const result = await db.execute('SELECT * FROM testimonials WHERE is_active = 1 ORDER BY id');
-    return c.json(sanitizeRows(result.rows));
+    const cached = await cachedQuery(c.env.KV, 'testimonials:active', CACHE_TTL.testimonials, async () => {
+      const result = await db.execute('SELECT * FROM testimonials WHERE is_active = 1 ORDER BY id');
+      return sanitizeRows(result.rows);
+    });
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch testimonials' }, 500);
   }
@@ -956,6 +1147,7 @@ app.post('/api/testimonials', authMiddleware, adminMiddleware, async (c) => {
       args: [name, role || null, avatar || null, quote, rating || 5, is_active != null ? (is_active ? 1 : 0) : 1],
     });
     const testimonial = await db.execute({ sql: 'SELECT * FROM testimonials WHERE id = ?', args: [Number(result.lastInsertRowid)] });
+    if (c.env.KV) await cacheDelete(c.env.KV, 'testimonials:active');
     return c.json(testimonial.rows[0], 201);
   } catch {
     return c.json({ error: 'Failed to create testimonial' }, 500);
@@ -973,6 +1165,7 @@ app.put('/api/testimonials/:id', authMiddleware, adminMiddleware, async (c) => {
       args: [name, role || null, avatar || null, quote, rating || 5, is_active != null ? (is_active ? 1 : 0) : 1, c.req.param('id')],
     });
     const result = await db.execute({ sql: 'SELECT * FROM testimonials WHERE id = ?', args: [c.req.param('id')] });
+    if (c.env.KV) await cacheDelete(c.env.KV, 'testimonials:active');
     return c.json(result.rows[0]);
   } catch {
     return c.json({ error: 'Failed to update testimonial' }, 500);
@@ -986,6 +1179,7 @@ app.delete('/api/testimonials/:id', authMiddleware, adminMiddleware, async (c) =
     const existing = await db.execute({ sql: 'SELECT id FROM testimonials WHERE id = ?', args: [id] });
     if (existing.rows.length === 0) return c.json({ error: 'Testimonial not found' }, 404);
     await db.execute({ sql: 'DELETE FROM testimonials WHERE id = ?', args: [id] });
+    if (c.env.KV) await cacheDelete(c.env.KV, 'testimonials:active');
     return c.json({ message: 'Testimonial deleted' });
   } catch {
     return c.json({ error: 'Failed to delete testimonial' }, 500);
@@ -1036,7 +1230,7 @@ app.post('/api/payments/refund', authMiddleware, adminMiddleware, async (c) => {
   }
 });
 
-app.get('/api/shipping/rates', authMiddleware, async (c) => {
+app.get('/api/shipping/rates', authMiddleware, rateLimitMiddleware('shipping'), async (c) => {
   try {
     const subtotal = c.req.query('subtotal');
     const destination_city = c.req.query('destination_city');
@@ -1048,30 +1242,34 @@ app.get('/api/shipping/rates', authMiddleware, async (c) => {
     const width = c.req.query('width');
     const height = c.req.query('height');
 
-    if (c.env.SHIPPO_API_TOKEN && c.env.SHIPPO_API_TOKEN !== 'shippo_test_replace_with_your_token') {
-      try {
-        const shipment = await shippoPost('/shipments/', {
-          address_from: { name: 'NOVA Technologies', street1: '350 Fifth Avenue', city: 'New York', state: 'NY', zip: '10118', country: 'US' },
-          address_to: { city: destination_city || 'Los Angeles', state: destination_state || 'CA', zip: destination_zip || '90001', country: destination_country || 'US' },
-          parcels: [{ length: length || '30', width: width || '25', height: height || '20', weight: weight || '500', mass_unit: 'g', distance_unit: 'cm' }],
-          async: false,
-        }, c.env);
-        if (shipment.rates && shipment.rates.length > 0) {
-          const rates = shipment.rates
-            .map(shippoRateToShippingRate)
-            .filter((r: any) => r.price > 0)
-            .sort((a: any, b: any) => a.price - b.price);
-          const sub = Number(subtotal) || 0;
-          const freeStandard = { id: 'free_standard', carrier: 'Standard', name: 'Free Standard Shipping', price: sub >= 200 ? 0 : 15, estimatedDays: '7-10 business days', tracking: true, insurance: false };
-          return c.json([...rates.slice(0, 7), freeStandard]);
-        }
-      } catch {}
-    }
-    const sub = Number(subtotal) || 0;
-    return c.json(FALLBACK_RATES.map(rate => ({
-      ...rate,
-      price: rate.id === 'free_standard' ? (sub >= 200 ? 0 : 15) : rate.price,
-    })));
+    const cacheKey = `shipping:${JSON.stringify({ destination_zip, destination_city, destination_state, weight, length, width, height })}`;
+    const cached = await cachedQuery(c.env.KV, cacheKey, CACHE_TTL.shippingRates, async () => {
+      if (c.env.SHIPPO_API_TOKEN && c.env.SHIPPO_API_TOKEN !== 'shippo_test_replace_with_your_token') {
+        try {
+          const shipment = await shippoPost('/shipments/', {
+            address_from: { name: 'NOVA Technologies', street1: '350 Fifth Avenue', city: 'New York', state: 'NY', zip: '10118', country: 'US' },
+            address_to: { city: destination_city || 'Los Angeles', state: destination_state || 'CA', zip: destination_zip || '90001', country: destination_country || 'US' },
+            parcels: [{ length: length || '30', width: width || '25', height: height || '20', weight: weight || '500', mass_unit: 'g', distance_unit: 'cm' }],
+            async: false,
+          }, c.env);
+          if (shipment.rates && shipment.rates.length > 0) {
+            const rates = shipment.rates
+              .map(shippoRateToShippingRate)
+              .filter((r: any) => r.price > 0)
+              .sort((a: any, b: any) => a.price - b.price);
+            const sub = Number(subtotal) || 0;
+            const freeStandard = { id: 'free_standard', carrier: 'Standard', name: 'Free Standard Shipping', price: sub >= 200 ? 0 : 15, estimatedDays: '7-10 business days', tracking: true, insurance: false };
+            return [...rates.slice(0, 7), freeStandard];
+          }
+        } catch {}
+      }
+      const sub = Number(subtotal) || 0;
+      return FALLBACK_RATES.map(rate => ({
+        ...rate,
+        price: rate.id === 'free_standard' ? (sub >= 200 ? 0 : 15) : rate.price,
+      }));
+    });
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch shipping rates' }, 500);
   }
@@ -1169,25 +1367,26 @@ app.get('/api/shipping/track/:carrier/:trackingNumber', authMiddleware, async (c
 
 app.get('/api/shipping/carriers', authMiddleware, async (c) => {
   try {
-    if (c.env.SHIPPO_API_TOKEN && c.env.SHIPPO_API_TOKEN !== 'shippo_test_replace_with_your_token') {
-      try {
-        const carriers = await shippoGet('/carrieraccounts/', c.env);
-        return c.json(
-          (carriers.results || []).map((car: any) => ({
+    const cached = await cachedQuery(c.env.KV, 'carriers:all', CACHE_TTL.carriers, async () => {
+      if (c.env.SHIPPO_API_TOKEN && c.env.SHIPPO_API_TOKEN !== 'shippo_test_replace_with_your_token') {
+        try {
+          const carriers = await shippoGet('/carrieraccounts/', c.env);
+          return (carriers.results || []).map((car: any) => ({
             object_id: car.object_id,
             carrier: car.carrier,
             account_name: car.account_name || car.carrier,
             active: car.is_active,
-          }))
-        );
-      } catch {}
-    }
-    return c.json([
-      { carrier: 'USPS', account_name: 'USPS', active: true },
-      { carrier: 'UPS', account_name: 'UPS', active: true },
-      { carrier: 'FedEx', account_name: 'FedEx', active: true },
-      { carrier: 'DHL', account_name: 'DHL Express', active: true },
-    ]);
+          }));
+        } catch {}
+      }
+      return [
+        { carrier: 'USPS', account_name: 'USPS', active: true },
+        { carrier: 'UPS', account_name: 'UPS', active: true },
+        { carrier: 'FedEx', account_name: 'FedEx', active: true },
+        { carrier: 'DHL', account_name: 'DHL Express', active: true },
+      ];
+    });
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch carriers' }, 500);
   }
@@ -1653,11 +1852,14 @@ app.put('/api/fulfillment/pick-lists/:listId/items/:itemId', authMiddleware, adm
 app.get('/api/suppliers', authMiddleware, adminMiddleware, async (c) => {
   const db = createDb(c.env);
   try {
-    const result = await db.execute({
-      sql: `SELECT s.*, COUNT(sp.id) as product_count FROM suppliers s LEFT JOIN supplier_products sp ON s.id = sp.supplier_id GROUP BY s.id ORDER BY s.name`,
-      args: [],
+    const cached = await cachedQuery(c.env.KV, 'admin:suppliers', CACHE_TTL.suppliers, async () => {
+      const result = await db.execute({
+        sql: `SELECT s.*, COUNT(sp.id) as product_count FROM suppliers s LEFT JOIN supplier_products sp ON s.id = sp.supplier_id GROUP BY s.id ORDER BY s.name`,
+        args: [],
+      });
+      return sanitizeRows(result.rows);
     });
-    return c.json(sanitizeRows(result.rows));
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch suppliers' }, 500);
   }
@@ -1672,7 +1874,9 @@ app.post('/api/suppliers', authMiddleware, adminMiddleware, async (c) => {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [name, contact_name || null, email || null, phone || null, address || null, city || null, country || null, payment_terms || 'Net 30', lead_time_days || 14],
     });
-    return c.json({ id: result.lastInsertRowid });
+    const newId = result.lastInsertRowid;
+    if (c.env.KV) await cacheDelete(c.env.KV, 'admin:suppliers');
+    return c.json({ id: newId });
   } catch {
     return c.json({ error: 'Failed to create supplier' }, 500);
   }
@@ -1690,6 +1894,7 @@ app.put('/api/suppliers/:id', authMiddleware, adminMiddleware, async (c) => {
             lead_time_days=COALESCE(?,lead_time_days), is_active=COALESCE(?,is_active) WHERE id=?`,
       args: [name ?? null, contact_name ?? null, email ?? null, phone ?? null, address ?? null, city ?? null, country ?? null, payment_terms ?? null, lead_time_days ?? null, is_active ?? null, id],
     });
+    if (c.env.KV) await cacheDelete(c.env.KV, 'admin:suppliers');
     return c.json({ success: true });
   } catch {
     return c.json({ error: 'Failed to update supplier' }, 500);
@@ -1702,6 +1907,7 @@ app.delete('/api/suppliers/:id', authMiddleware, adminMiddleware, async (c) => {
     const id = c.req.param('id');
     await db.execute({ sql: 'DELETE FROM supplier_products WHERE supplier_id = ?', args: [id] });
     await db.execute({ sql: 'DELETE FROM suppliers WHERE id = ?', args: [id] });
+    if (c.env.KV) await cacheDelete(c.env.KV, 'admin:suppliers');
     return c.json({ message: 'Supplier deleted' });
   } catch {
     return c.json({ error: 'Failed to delete supplier' }, 500);
@@ -1984,13 +2190,17 @@ app.get('/api/notifications', authMiddleware, async (c) => {
     const user = c.get('user');
     const type = c.req.query('type');
     const unread_only = c.req.query('unread_only');
-    let sql = 'SELECT * FROM notifications WHERE user_id = ?';
-    const args: any[] = [user.id];
-    if (type) { sql += ' AND type = ?'; args.push(type); }
-    if (unread_only === '1') sql += " AND status != 'read'";
-    sql += ' ORDER BY created_at DESC LIMIT 50';
-    const result = await db.execute({ sql, args });
-    return c.json(sanitizeRows(result.rows));
+    const cacheKey = userKey(user.id, 'notif', `${type || ''}:${unread_only || ''}`);
+    const cached = await cachedQuery(c.env.KV, cacheKey, CACHE_TTL.notifications, async () => {
+      let sql = 'SELECT * FROM notifications WHERE user_id = ?';
+      const args: any[] = [user.id];
+      if (type) { sql += ' AND type = ?'; args.push(type); }
+      if (unread_only === '1') sql += " AND status != 'read'";
+      sql += ' ORDER BY created_at DESC LIMIT 50';
+      const result = await db.execute({ sql, args });
+      return sanitizeRows(result.rows);
+    });
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch notifications' }, 500);
   }
@@ -2001,6 +2211,7 @@ app.put('/api/notifications/:id/read', authMiddleware, async (c) => {
   try {
     const user = c.get('user');
     await db.execute({ sql: "UPDATE notifications SET status = 'read' WHERE id = ? AND user_id = ?", args: [c.req.param('id'), user.id] });
+    if (c.env.KV) { await cacheDelete(c.env.KV, userKey(user.id, 'notif', ':')); await cacheDelete(c.env.KV, userKey(user.id, 'notif-unread')); }
     return c.json({ success: true });
   } catch {
     return c.json({ error: 'Failed to mark notification' }, 500);
@@ -2012,6 +2223,7 @@ app.put('/api/notifications/read-all', authMiddleware, async (c) => {
   try {
     const user = c.get('user');
     await db.execute({ sql: "UPDATE notifications SET status = 'read' WHERE user_id = ? AND status != 'read'", args: [user.id] });
+    if (c.env.KV) { await cacheDelete(c.env.KV, userKey(user.id, 'notif', ':')); await cacheDelete(c.env.KV, userKey(user.id, 'notif-unread')); }
     return c.json({ success: true });
   } catch {
     return c.json({ error: 'Failed to mark notifications' }, 500);
@@ -2022,11 +2234,14 @@ app.get('/api/notifications/unread-count', authMiddleware, async (c) => {
   const db = createDb(c.env);
   try {
     const user = c.get('user');
-    const result = await db.execute({
-      sql: "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND status != 'read'",
-      args: [user.id],
+    const cached = await cachedQuery(c.env.KV, userKey(user.id, 'notif-unread'), CACHE_TTL.notifications, async () => {
+      const result = await db.execute({
+        sql: "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND status != 'read'",
+        args: [user.id],
+      });
+      return Number((result.rows[0] as any).count);
     });
-    return c.json({ count: Number((result.rows[0] as any).count) });
+    return c.json({ count: cached });
   } catch {
     return c.json({ error: 'Failed to get count' }, 500);
   }
@@ -2181,18 +2396,21 @@ app.get('/api/analytics/inventory', authMiddleware, adminMiddleware, async (c) =
 app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (c) => {
   const db = createDb(c.env);
   try {
-    const [users, products, orders, revenue] = await Promise.all([
-      db.execute("SELECT COUNT(*) as count FROM users WHERE role='user'"),
-      db.execute('SELECT COUNT(*) as count FROM products'),
-      db.execute('SELECT COUNT(*) as count FROM orders'),
-      db.execute("SELECT COALESCE(SUM(total),0) as total FROM orders WHERE status='confirmed'"),
-    ]);
-    return c.json({
-      totalUsers: Number((users.rows[0] as any).count),
-      totalProducts: Number((products.rows[0] as any).count),
-      totalOrders: Number((orders.rows[0] as any).count),
-      totalRevenue: Number((revenue.rows[0] as any).total),
+    const cached = await cachedQuery(c.env.KV, 'admin:stats', CACHE_TTL.stats, async () => {
+      const [users, products, orders, revenue] = await Promise.all([
+        db.execute("SELECT COUNT(*) as count FROM users WHERE role='user'"),
+        db.execute('SELECT COUNT(*) as count FROM products'),
+        db.execute('SELECT COUNT(*) as count FROM orders'),
+        db.execute("SELECT COALESCE(SUM(total),0) as total FROM orders WHERE status='confirmed'"),
+      ]);
+      return {
+        totalUsers: Number((users.rows[0] as any).count),
+        totalProducts: Number((products.rows[0] as any).count),
+        totalOrders: Number((orders.rows[0] as any).count),
+        totalRevenue: Number((revenue.rows[0] as any).total),
+      };
     });
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch stats' }, 500);
   }
@@ -2201,8 +2419,11 @@ app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (c) => {
 app.get('/api/admin/users', authMiddleware, adminMiddleware, async (c) => {
   const db = createDb(c.env);
   try {
-    const result = await db.execute('SELECT id, name, email, role, avatar, phone, address, created_at FROM users ORDER BY created_at DESC');
-    return c.json(sanitizeRows(result.rows));
+    const cached = await cachedQuery(c.env.KV, 'admin:users', CACHE_TTL.stats, async () => {
+      const result = await db.execute('SELECT id, name, email, role, avatar, phone, address, created_at FROM users ORDER BY created_at DESC');
+      return sanitizeRows(result.rows);
+    });
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch users' }, 500);
   }
@@ -2224,6 +2445,7 @@ app.post('/api/admin/categories', authMiddleware, adminMiddleware, async (c) => 
     const { name, icon, color } = await c.req.json();
     if (!name || !icon) return c.json({ error: 'Name and icon required' }, 400);
     const result = await db.execute({ sql: 'INSERT INTO categories (name, icon, color) VALUES (?, ?, ?)', args: [name, icon, color || null] });
+    if (c.env.KV) await cacheDelete(c.env.KV, 'categories:all');
     return c.json({ id: Number(result.lastInsertRowid), name, icon, color: color || null, count: 0 }, 201);
   } catch {
     return c.json({ error: 'Failed to create category' }, 500);
@@ -2235,6 +2457,7 @@ app.put('/api/admin/categories/:id', authMiddleware, adminMiddleware, async (c) 
   try {
     const { name, icon, color } = await c.req.json();
     await db.execute({ sql: 'UPDATE categories SET name = COALESCE(?, name), icon = COALESCE(?, icon), color = COALESCE(?, color) WHERE id = ?', args: [name || null, icon || null, color || null, c.req.param('id')] });
+    if (c.env.KV) await cacheDelete(c.env.KV, 'categories:all');
     return c.json({ message: 'Category updated' });
   } catch {
     return c.json({ error: 'Failed to update category' }, 500);
@@ -2245,6 +2468,7 @@ app.delete('/api/admin/categories/:id', authMiddleware, adminMiddleware, async (
   const db = createDb(c.env);
   try {
     await db.execute({ sql: 'DELETE FROM categories WHERE id = ?', args: [c.req.param('id')] });
+    if (c.env.KV) await cacheDelete(c.env.KV, 'categories:all');
     return c.json({ message: 'Category deleted' });
   } catch {
     return c.json({ error: 'Failed to delete category' }, 500);
@@ -2254,14 +2478,17 @@ app.delete('/api/admin/categories/:id', authMiddleware, adminMiddleware, async (
 app.get('/api/categories', async (c) => {
   const db = createDb(c.env);
   try {
-    const result = await db.execute('SELECT * FROM categories ORDER BY id');
-    return c.json(sanitizeRows(result.rows));
+    const cached = await cachedQuery(c.env.KV, 'categories:all', CACHE_TTL.categories, async () => {
+      const result = await db.execute('SELECT * FROM categories ORDER BY id');
+      return sanitizeRows(result.rows);
+    });
+    return c.json(cached);
   } catch {
     return c.json({ error: 'Failed to fetch categories' }, 500);
   }
 });
 
-app.post('/api/admin/broadcast', authMiddleware, adminMiddleware, async (c) => {
+app.post('/api/admin/broadcast', authMiddleware, adminMiddleware, rateLimitMiddleware('broadcast'), async (c) => {
   const db = createDb(c.env);
   try {
     const { subject, title, message, target } = await c.req.json();
